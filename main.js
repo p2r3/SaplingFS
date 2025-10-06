@@ -1,6 +1,8 @@
 const zlib = require("node:zlib");
 const { promisify } = require("node:util");
 const os = require("node:os");
+const fs = require("node:fs");
+const path = require("node:path");
 const nbt = require("nbt");
 
 const unzip = promisify(zlib.unzip);
@@ -8,9 +10,9 @@ const deflate = promisify(zlib.deflate);
 
 // Coordinate range for block changes
 // Lower bound is inclusive, upper bound is exclusive
-const X_MIN = -16, X_MAX = 16;
+const X_MIN = -16, X_MAX = 32;
 const Y_MIN = -64, Y_MAX = 128;
-const Z_MIN = -16, Z_MAX = 16;
+const Z_MIN = -16, Z_MAX = 32;
 
 // Calculate midpoint of allocated area
 const X_MID = Math.floor((X_MIN + X_MAX) / 2);
@@ -171,8 +173,8 @@ async function blocksToRegion (blocks, r, rx, rz) {
       const longs = [];
       for (let j = 0; j < ids.length; j += 16) {
         longs.push([
-          (ids[j + 0] << 28) + (ids[j + 1] << 24) + (ids[j + 2] << 20) + (ids[j + 3] << 16) + (ids[j + 4] << 12) + (ids[j + 5] << 8) + (ids[j + 6] << 4) + (ids[j + 7]),
-          (ids[j + 8] << 28) + (ids[j + 9] << 24) + (ids[j + 10] << 20) + (ids[j + 11] << 16) + (ids[j + 12] << 12) + (ids[j + 13] << 8) + (ids[j + 14] << 4) + (ids[j + 15]),
+          (ids[j + 15] << 28) + (ids[j + 14] << 24) + (ids[j + 13] << 20) + (ids[j + 12] << 16) + (ids[j + 11] << 12) + (ids[j + 10] << 8) + (ids[j + 9] << 4) + (ids[j + 8]),
+          (ids[j + 7] << 28) + (ids[j + 6] << 24) + (ids[j + 5] << 20) + (ids[j + 4] << 16) + (ids[j + 3] << 12) + (ids[j + 2] << 8) + (ids[j + 1] << 4) + (ids[j + 0]),
         ]);
       }
 
@@ -246,9 +248,102 @@ if (!worldName) {
 const worldPath = `${os.homedir()}/.minecraft/saves/${worldName}`;
 
 // Load region data into block array
-await forRegion (async function (region, rx, rz) {
-  await regionToBlocks(region, blocks, rx, rz);
-});
+// await forRegion (async function (region, rx, rz) {
+//   await regionToBlocks(region, blocks, rx, rz);
+// });
+
+const separationDepth = 3;
+
+function buildFileList (currentPath, list = [], depth = 0) {
+  try {
+
+    const items = fs.readdirSync(currentPath, { withFileTypes: true });
+
+    for (const item of items) {
+      const itemPath = path.join(currentPath, item.name);
+      if (!item.isDirectory()) continue;
+      if (item.name.includes("cache")) continue;
+      buildFileList(itemPath, list, depth + 1);
+    }
+
+    for (const item of items) {
+      const itemPath = path.join(currentPath, item.name);
+      if (!item.isFile()) continue;
+      const size = fs.statSync(itemPath).size;
+      if (size === 0) continue;
+      const pathParts = currentPath.split(path.sep);
+      const parent = pathParts.length > separationDepth ? pathParts[separationDepth] : null;
+
+      list.push({
+        name: item.name,
+        size: size,
+        depth: depth,
+        parent: parent
+      });
+    }
+
+  } catch (error) {
+    console.warn("Failed to read directory:", currentPath);
+  }
+  return list;
+}
+
+const fileList = buildFileList("/home/p2r3/").slice(0, 10000);
+
+await Bun.write("list.json", JSON.stringify(fileList));
+
+let nodes = [[X_MID, Y_MIN, Z_MID]];
+
+const mapping = [];
+const visited = new Set();
+
+const palette = [
+  "lime_wool",
+  "orange_wool",
+  "yellow_wool",
+  "light_blue_wool",
+  "pink_wool"
+];
+let paletteIndex = 0;
+
+while (fileList.length > 0 && nodes.length > 0) {
+
+  let [x, y, z] = nodes.shift();
+
+  if (
+    x < X_MIN || x >= X_MAX ||
+    y < Y_MIN || y >= Y_MAX ||
+    z < Z_MIN || z >= Z_MAX
+  ) continue;
+
+  const key = `${x},${y},${z}`;
+  if (visited.has(key)) continue;
+  visited.add(key);
+
+  const file = fileList.shift();
+  mapping.push({ x, y, z, file });
+
+  blocks[x - X_MIN][y - Y_MIN][z - Z_MIN] = palette[paletteIndex];
+
+  if (mapping.length > 1 && mapping[mapping.length - 2].file.parent !== file.parent) {
+    console.log(file.parent);
+    nodes = [];
+    y = Y_MIN;
+    paletteIndex ++;
+  }
+
+  if (Math.random() < 0.05) nodes.push([x, y + 1, z]);
+
+  do {
+    nodes.push([x - 1, y, z]);
+    nodes.push([x + 1, y, z]);
+    nodes.push([x, y, z - 1]);
+    nodes.push([x, y, z + 1]);
+    if (Math.random() > 0.5) x += Math.random() > 0.5 ? -1 : 1;
+    else z += Math.random() > 0.5 ? -1 : 1;
+  } while (nodes.length === 0);
+
+}
 
 // Write block data to region files
 await forRegion (async function (region, rx, rz) {
