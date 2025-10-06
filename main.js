@@ -12,6 +12,11 @@ const X_MIN = -16, X_MAX = 16;
 const Y_MIN = -64, Y_MAX = 128;
 const Z_MIN = -16, Z_MAX = 16;
 
+// Calculate midpoint of allocated area
+const X_MID = Math.floor((X_MIN + X_MAX) / 2);
+const Y_MID = Math.floor((Y_MIN + Y_MAX) / 2);
+const Z_MID = Math.floor((Z_MIN + Z_MAX) / 2);
+
 const blocks = [];
 for (let x = 0; x < X_MAX - X_MIN; x ++) {
   blocks[x] = [];
@@ -219,6 +224,20 @@ async function blocksToRegion (blocks, r, rx, rz) {
 
 }
 
+/**
+ * Runs a function for each relevant region file.
+ *
+ * @param {function} callback - Function to call, passed a region byte buffer and its coordinates
+ */
+async function forRegion (callback) {
+  for (let rx = Math.floor(X_MIN / (16 * 32)); rx < Math.ceil(X_MAX / (16 * 32)); rx ++) {
+    for (let rz = Math.floor(Z_MIN / (16 * 32)); rz < Math.ceil(Z_MAX / (16 * 32)); rz ++) {
+      const region = await Bun.file(`${worldPath}/region/r.${rx}.${rz}.mca`).bytes();
+      await callback(region, rx, rz);
+    }
+  }
+}
+
 const worldName = process.argv[2];
 if (!worldName) {
   console.error("No world name provided.");
@@ -226,15 +245,13 @@ if (!worldName) {
 }
 const worldPath = `${os.homedir()}/.minecraft/saves/${worldName}`;
 
-for (let rx = Math.floor(X_MIN / (16 * 32)); rx < Math.ceil(X_MAX / (16 * 32)); rx ++) {
-  for (let rz = Math.floor(Z_MIN / (16 * 32)); rz < Math.ceil(Z_MAX / (16 * 32)); rz ++) {
+// Load region data into block array
+await forRegion (async function (region, rx, rz) {
+  await regionToBlocks(region, blocks, rx, rz);
+});
 
-    const region = await Bun.file(`${worldPath}/region/r.${rx}.${rz}.mca`).bytes();
-
-    await regionToBlocks(region, blocks, rx, rz);
-    await blocksToRegion(blocks, region, rx, rz);
-
-    await Bun.write(`world/r.${rx}.${rz}.mca`, region);
-
-  }
-}
+// Write block data to region files
+await forRegion (async function (region, rx, rz) {
+  await blocksToRegion(blocks, region, rx, rz);
+  await Bun.write(`${worldPath}/region/r.${rx}.${rz}.mca`, region);
+});
