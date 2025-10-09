@@ -195,6 +195,11 @@ async function blocksToRegion (blocks, r, rx, rz, bounds) {
     const compressed = await deflate(output);
 
     const newLength = compressed.length;
+    if (newLength + 5 > 4096) {
+      console.warn(`Warning: Chunk (${_x} ${_z}) exceeds available space. Expect a missing chunk.`);
+      continue;
+    }
+
     r.set(compressed, offset * 4096 + 5);
 
     // Encode chunk data length
