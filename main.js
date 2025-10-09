@@ -226,56 +226,67 @@ async function placeFileBlocks () {
     if (_z !== Math.floor(entry.pos.z / 16)) continue;
 
     const [x, y, z] = entry.pos.toArray();
-    try {
-      blocks[x - _x * 16][y + 64][z - _z * 16] = entry.block;
-    } catch (e) {
-      console.log(y);
-      throw e;
-    }
+    blocks[x - _x * 16][y + 64][z - _z * 16] = entry.block;
 
     entry.valid = false;
     validEntries --;
   }
 
-  for (let x = 0; x < 16; x ++) {
-    for (let y = 0; y < 128 + 64; y ++) {
-      for (let z = 0; z < 16; z ++) {
+  let swaps;
+  do {
+    swaps = 0;
+    for (let x = 0; x < 16; x ++) {
+      for (let y = 0; y < 128 + 64; y ++) {
+        for (let z = 0; z < 16; z ++) {
 
-        if (blocks[x][y][z] === "air") continue;
-        if (blocks[x][y][z] === "oak_log") continue;
-        if (blocks[x][y][z] === "oak_leaves") continue;
+          if (blocks[x][y][z] === "air") continue;
+          if (blocks[x][y][z] === "oak_log") continue;
+          if (blocks[x][y][z] === "oak_leaves") continue;
 
-        const posRelative = new Vector(x, y, z);
-        const pos = posRelative.absolute(_x, _z);
+          const posRelative = new Vector(x, y, z);
+          const pos = posRelative.absolute(_x, _z);
 
-        const adjacent = countAdjacent(pos);
-        if (adjacent > 2) continue;
+          const adjacent = countAdjacent(pos);
 
-        const block = blocks[x][y][z];
-        const key = pos.toString();
-        blocks[x][y][z] = "air";
+          const key = pos.toString();
+          const mappingEntry = mapping[key];
+          delete mapping[key];
 
-        let found = false;
+          let bestAdjacent = adjacent;
+          let bestPosition;
 
-        for (let i = 0; i < 6; i ++) {
-          const curr = posRelative.shifted(i);
-          const cabs = curr.absolute(_x, _z);
-          const [cx, cy, cz] = curr.toArray();
-          if (blocks[cx]?.[cy]?.[cz] === "air" && countAdjacent(cabs) > adjacent) {
-            blocks[cx][cy][cz] = block;
-            if (key in mapping) {
-              mapping[cabs.toString()] = mapping[key];
-              delete mapping[key];
-            }
-            found = true;
-            break;
+          for (let i = 0; i < 6; i ++) {
+            const rel = posRelative.shifted(i);
+            const abs = pos.shifted(i);
+            if (
+              rel.x < 0 || rel.x >= 16 ||
+              rel.z < 0 || rel.z >= 16 ||
+              rel.y < 0 || rel.y >= 128 + 64
+            ) continue;
+            if (abs.toString() in mapping) continue;
+            const newAdjacent = countAdjacent(abs);
+            if (newAdjacent <= bestAdjacent) continue;
+            bestAdjacent = newAdjacent;
+            bestPosition = { rel, abs };
           }
-        }
-        if (!found) blocks[x][y][z] = block;
 
+          if (bestAdjacent === adjacent) {
+            mapping[key] = mappingEntry;
+            continue;
+          }
+
+          const [sx, sy, sz] = bestPosition.rel.toArray();
+          blocks[sx][sy][sz] = blocks[x][y][z];
+          blocks[x][y][z] = "air";
+
+          mapping[bestPosition.abs.toString()] = mappingEntry;
+
+          swaps ++;
+
+        }
       }
     }
-  }
+  } while (swaps > 0);
 
   if (!debug) {
     for (let x = 0; x < 16; x ++) {
