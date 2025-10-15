@@ -323,8 +323,8 @@ await forMappedChunks(async function (blocks, entries, _x, _z, bounds) {
   // Fill block array with relevant blocks
   for (const entry of entries) {
     // Convert covered grass blocks to dirt
-    const blockAbove = entry.pos.add(0, 1, 0).toString() in mapping;
-    if (entry.block === "grass_block" && blockAbove) {
+    const blockAbove = mapping[entry.pos.add(0, 1, 0).toString()];
+    if (entry.block === "grass_block" && blockAbove && blockAbove.block !== "oak_leaves") {
       entry.block = "dirt";
     }
     // Assign block to chunk array
