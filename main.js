@@ -4,15 +4,24 @@ const os = require("node:os");
 const clipboard = require("clipboardy");
 
 const world = require("./parseWorld.js");
-const buildFileList = require("./buildFileList.js");
+const fileTools = require("./fileTools.js");
+const worldGenTools = require("./worldGenTools.js");
 const Vector = require("./Vector.js");
 
 // Read command-line parameters
 const worldName = process.argv[2];
 const debug = process.argv.includes("--debug");
+const rootPath = (process.argv.includes("--path") && process.argv?.[process.argv.indexOf("--path") + 1]) || "/";
+const parentDepth = (process.argv.includes("--depth") && Number(process.argv?.[process.argv.indexOf("--depth") + 1])) || 3;
 // Validate parameters
-if (!worldName) {
-  console.error(`Usage: SaplingFS <world> [--debug]`);
+if (!worldName || !rootPath || !parentDepth) {
+  console.error(`
+Usage: SaplingFS <world> [options]
+
+Options:
+    --debug           Generates colorful terrain to help debug directory grouping
+    --path <string>   Root path from which to look for files
+    --depth <number>  Depth from absolute root at which to split directory groups`);
   process.exit();
 }
 // Find Minecraft world file path
@@ -23,470 +32,15 @@ if (fs.existsSync(worldName) && fs.lstatSync(worldName).isDirectory()) {
   worldPath = `${os.homedir()}/.minecraft/saves/${worldName}`;
 }
 
-// Build list of files from root
-const fileList = buildFileList("/home/p2r3");
-console.log(`Found ${fileList.length} files`);
-
-let nodes = [new Vector(0, 32, 0)]; // Open nodes
-const mapping = {}; // Closed nodes (linked to files)
-let trees = [], ponds = [];
-
-let terrainGroup = 0;
-let lastParent = "";
-
-const parentDepth = 3;
-
-let mins = new Vector(0, 0, 0);
-let maxs = new Vector(0, 0, 0);
-let min_x = 0, max_x = 0, min_z = 0, max_z = 0;
-
-const WORLD_BOUNDS = [
-  new Vector(-32 * 14, -64, -32 * 14),
-  new Vector(32 * 14, 320, 32 * 14)
-];
-
-const debugPalette = [
-  "white_wool",
-  "light_gray_wool",
-  "gray_wool",
-  "black_wool",
-  "brown_wool",
-  "red_wool",
-  "orange_wool",
-  "yellow_wool",
-  "lime_wool",
-  "green_wool",
-  "cyan_wool",
-  "light_blue_wool",
-  "blue_wool",
-  "purple_wool",
-  "magenta_wool",
-  "pink_wool"
-];
-
-// Whether the block is part of natural ground terrain
-function isGroundBlock (block) {
-  return (
-    block === "dirt" ||
-    block === "grass_block" ||
-    block === "stone"
-  );
-}
-
-// Whether grass converts to dirt under this block
-function isHeavyBlock (block) {
-  return (
-    isGroundBlock(block) ||
-    block === "oak_log" ||
-    block === "water"
-  );
-}
-
-function isAir (block) {
-  return !block || block === "air";
-}
-
-function forTreeBlocks (pos, callback) {
-  // Tree stump
-  for (let i = 0; i < 5; i ++) {
-    callback(pos.add(0, i, 0), "oak_log");
-  }
-  // Bottom leaf layer
-  for (let i = 0; i < 2; i ++) {
-    for (let j = -2; j <= 2; j ++) {
-      for (let k = -2; k <= 2; k ++) {
-        if (j === 0 && k === 0) continue;
-        if (i === 1 && Math.abs(j) === 2 && Math.abs(k) === 2) continue;
-        callback(pos.add(j, i + 2, k), "oak_leaves");
-      }
-    }
-  }
-  // Top leaf layer
-  for (let i = 0; i < 2; i ++) {
-    for (let j = -1; j <= 1; j ++) {
-      for (let k = -1; k <= 1; k ++) {
-        if (i === 0 && j === 0 && k === 0) continue;
-        if (i === 1 && j !== 0 && k !== 0) continue;
-        callback(pos.add(j, i + 4, k), "oak_leaves");
-      }
-    }
-  }
-}
-
-let suppressFor = 0;
-let suppressDirection = 0;
-
-while (fileList.length > 0 && nodes.length > 0) {
-
-  const pos = nodes.shift();
-  const key = pos.toString();
-
-  if (
-    key in mapping ||
-    pos.x < WORLD_BOUNDS[0].x || pos.x > WORLD_BOUNDS[1].x ||
-    pos.y < WORLD_BOUNDS[0].y || pos.y > WORLD_BOUNDS[1].y ||
-    pos.z < WORLD_BOUNDS[0].z || pos.z > WORLD_BOUNDS[1].z
-  ) {
-    if (nodes.length === 0) {
-      const rand = new Vector();
-      do {
-        rand.x = Math.floor(Math.random() * (maxs.x - mins.x)) + mins.x;
-        rand.z = Math.floor(Math.random() * (maxs.z - maxs.z)) + mins.z;
-        rand.y = Math.floor(Math.random() * 64);
-      } while (rand.toString() in mapping);
-      nodes.push(rand);
-    }
-    continue;
-  }
-
-  suppressFor --;
-  if (suppressFor <= 0) {
-    suppressFor = Math.floor(Math.random() * nodes.length / 5);
-    suppressDirection = Math.floor(Math.random() * 4);
-  }
-
-  const file = fileList.shift();
-
-  const pathParts = file.path.split(path.sep).slice(0, -1);
-  const shortParent = pathParts.slice(0, parentDepth + 1).join(path.sep);
-
-  if (lastParent && lastParent !== shortParent) {
-    console.log(shortParent);
-
-    nodes = [];
-    terrainGroup ++;
-
-    for (const pond of ponds) {
-
-      const candidates = Object.values(mapping).filter(c => (
-        c.pos.x === pond.x &&
-        c.pos.z === pond.z
-      ));
-      candidates.sort((a, b) => b.pos.y - a.pos.y);
-      pond.y = candidates[0].pos.y;
-
-      const fillNodes = [pond];
-
-      do {
-
-        const curr = fillNodes.shift();
-        const key = curr.toString();
-        if (!(key in mapping)) continue;
-
-        if (trees.find(c => (
-          Math.abs(c.pos.x - curr.x) < 3 &&
-          Math.abs(c.pos.z - curr.z) < 3
-        ))) continue;
-
-        const blockAbove = mapping[curr.add(0, 1, 0).toString()]?.block;
-        if (isGroundBlock(blockAbove)) continue;
-
-        let neighbors = 0;
-        let skip = false;
-        for (let i = 0; i < 6; i ++) {
-          const shiftKey = curr.shifted(i).toString();
-          const block = mapping[shiftKey]?.block;
-          if (i < 4 && isAir(block)) {
-            skip = true;
-            break;
-          }
-          if (block === "water") neighbors ++;
-        }
-        if (skip) continue;
-
-        mapping[key].block = "water";
-
-        for (let i = 0; i < 4; i ++) {
-          if (neighbors < 3 && Math.random() < 0.1) continue;
-          fillNodes.push(curr.shifted(i));
-        }
-        if (curr.y < 127 && Math.random() < 0.05) fillNodes.push(curr.add(0, 1, 0));
-        if (curr.y > -64 && Math.random() < 0.05) fillNodes.push(curr.add(0, -1, 0));
-
-      } while (Math.floor(Math.random() * 2000) !== 0 && fillNodes.length > 0);
-
-    }
-    ponds = [];
-
-    for (const tree of trees) {
-
-      const candidates = Object.values(mapping).filter(c => (
-        c.pos.x === tree.pos.x &&
-        c.pos.z === tree.pos.z
-      ));
-      candidates.sort((a, b) => b.pos.y - a.pos.y);
-      tree.pos.y = candidates[0].pos.y + 1;
-
-      forTreeBlocks(tree.pos, function (pos, block) {
-        const key = pos.toString();
-        if (key in mapping) {
-          fileList.push(tree.files.pop());
-        } else {
-          mapping[key] = { pos, block, file: tree.files.pop() };
-        }
-      });
-
-    }
-    trees = [];
-
-  }
-  lastParent = shortParent;
-
-  let block;
-  if (debug) {
-    block = debugPalette[terrainGroup % debugPalette.length];
-  } else {
-    block = "grass_block";
-  }
-  mapping[key] = { pos, file, block };
-
-  if (pos.x < mins.x) mins.x = pos.x;
-  if (pos.y < mins.y) mins.y = pos.y;
-  if (pos.z < mins.z) mins.z = pos.z;
-  if (pos.x > maxs.x) maxs.x = pos.x;
-  if (pos.y > maxs.y) maxs.y = pos.y;
-  if (pos.z > maxs.z) maxs.z = pos.z;
-
-  let adjacent = 0;
-  for (let i = 0; i < 6; i ++) {
-    if (pos.shifted(i).toString() in mapping) adjacent ++;
-  }
-
-  for (let i = 0; i < 4; i ++) {
-    if (adjacent < 3 && suppressDirection === i) continue;
-    nodes.push(pos.shifted(i));
-  }
-  if (pos.y < 127 && Math.random() < 0.05) nodes.push(pos.add(0, 1, 0));
-  if (pos.y > -64 && Math.random() < 0.05) nodes.push(pos.add(0, -1, 0));
-
-  if (Math.floor(Math.random() * 10000) === 0) {
-    ponds.push(pos.clone());
-  }
-
-  if (Math.floor(Math.random() * 5000) === 0) {
-    if (fileList.length < 62) continue;
-    if (trees.find(c => (
-      Math.abs(c.pos.x - pos.x) < 5 &&
-      Math.abs(c.pos.z - pos.z) < 5
-    ))) continue;
-    trees.push({
-      pos: pos.clone(),
-      files: fileList.slice(0, 62)
-    });
-    fileList.splice(0, 62);
-  }
-
-}
-
-console.log(`${fileList.length} files left unallocated`);
-
-/**
- * Iterates over chunks with blocks present in `mapping`, running a
- * callback function on each chunk.
- *
- * The callback is provided a block string array filled with air,
- * an array of relevant `mapping` entries, X/Z chunk coordinates,
- * and an array of min/max bounds for the chunk.
- *
- * @param {function }callback - The function to call (and await) on each chunk
- * @param {number|null} [rx=null] - Restrict to region (disabled by default)
- * @param {number|null} [rz=null] - Restrict to region (disabled by default)
- */
-async function forMappedChunks (callback, rx = null, rz = null) {
-  for (const key in mapping) {
-    if (rx !== null && rz !== null) {
-      if (Math.floor(mapping[key].pos.x / (16 * 32)) !== rx) continue;
-      if (Math.floor(mapping[key].pos.z / (16 * 32)) !== rz) continue;
-    }
-    mapping[key].valid = true;
-  }
-  let validEntries;
-  do {
-    validEntries = await iterateMappedChunks(callback);
-  } while (validEntries > 0);
-}
-// Recursive helper function for `forMappedChunks`
-async function iterateMappedChunks (callback) {
-
-  let _x, _z;
-  for (const key in mapping) {
-    const entry = mapping[key];
-    if (!("valid" in entry)) continue;
-    _x = Math.floor(entry.pos.x / 16);
-    _z = Math.floor(entry.pos.z / 16);
-    break;
-  }
-
-  const blocks = [];
-  for (let x = 0; x < 16; x ++) {
-    blocks[x] = [];
-    for (let y = 0; y < 128 + 64; y ++) {
-      blocks[x][y] = [];
-      for (let z = 0; z < 16; z ++) {
-        blocks[x][y][z] = "air";
-      }
-    }
-  }
-
-
-  let validEntries = Object.keys(mapping).length;
-  const entries = [];
-
-  for (const key in mapping) {
-    const entry = mapping[key];
-    if (!("valid" in entry)) {
-      validEntries --;
-      continue;
-    }
-
-    if (_x !== Math.floor(entry.pos.x / 16)) continue;
-    if (_z !== Math.floor(entry.pos.z / 16)) continue;
-
-    entries.push(entry);
-    delete entry.valid;
-    validEntries --;
-  }
-
-  const bounds = [
-    new Vector(_x * 16, -64, _z * 16),
-    new Vector(_x * 16 + 16, 128, _z * 16 + 16),
-  ];
-
-  await callback(blocks, entries, _x, _z, bounds);
-
-  return validEntries;
-
-}
-
-// Returns number of allocated blocks adjacent to the given position
-function countAdjacent (pos) {
-  let adjacent = 0;
-  for (let i = 0; i < 6; i ++) {
-    if (pos.shifted(i).toString() in mapping) adjacent ++;
-  }
-  return adjacent;
-};
-
-// Generate region data for mapped blocks
-await forMappedChunks(async function (blocks, entries, _x, _z, bounds) {
-
-  console.log(`Generating chunk (${_x} ${_z})`);
-
-  // Smooth out terrain by clumping together lonely blocks
-  let swaps;
-  do {
-    swaps = 0;
-    for (const entry of entries) {
-
-      if (!isGroundBlock(entry.block)) continue;
-
-      const pos = entry.pos;
-      const adjacent = countAdjacent(pos);
-
-      // Temporarily remove the current block's mapping entry
-      // It can still be restored by assigning `entry`
-      const key = pos.toString();
-      delete mapping[key];
-
-      let bestAdjacent = adjacent;
-      let bestPosition;
-
-      // Check all 6 directions for a better adjacent block score
-      for (let i = 0; i < 6; i ++) {
-        const abs = pos.shifted(i);
-        const rel = abs.relative(_x, _z);
-        // Make sure we're not stepping out of this chunk's boundaries
-        if (
-          rel.x < 0 || rel.x >= 16 ||
-          rel.z < 0 || rel.z >= 16 ||
-          rel.y < 0 || rel.y >= 128 + 64
-        ) continue;
-        // Abort if we're next to water
-        const key = abs.toString();
-        if (mapping[abs]?.block === "water") {
-          bestAdjacent = adjacent;
-          break;
-        }
-        // Make sure we're not shifting into an existing block
-        if (key in mapping) continue;
-        // Compare this cluster to the previous best
-        const newAdjacent = countAdjacent(abs);
-        if (newAdjacent <= bestAdjacent) continue;
-        bestAdjacent = newAdjacent;
-        bestPosition = { rel, abs };
-      }
-
-      // If no progress was made, restore previous mapping entry
-      if (bestAdjacent === adjacent) {
-        // Convert 1-block stubs to short grass
-        if (adjacent === 1) {
-          const blockBelow = mapping[pos.add(0, -1, 0).toString()]?.block;
-          if (blockBelow === "grass_block") entry.block = "short_grass";
-        }
-        mapping[key] = entry;
-        continue;
-      }
-
-      // Assign new block position
-      entry.pos = bestPosition.abs;
-      mapping[bestPosition.abs.toString()] = entry;
-
-      swaps ++;
-
-    }
-  } while (swaps > 0);
-
-  // Fill block array with relevant blocks
-  for (const entry of entries) {
-    // Convert covered grass blocks to dirt
-    const blockAbove = mapping[entry.pos.add(0, 1, 0).toString()];
-    if (entry.block === "grass_block" && isHeavyBlock(blockAbove?.block)) {
-      entry.block = "dirt";
-      // Convert deeply submerged blocks to stone
-      let submerged = true;
-      for (let i = 1; i <= 3; i ++) {
-        const currBlock = mapping[entry.pos.add(0, i, 0).toString()]?.block;
-        if (!isGroundBlock(currBlock)) {
-          submerged = false;
-          break;
-        }
-      }
-      if (submerged) entry.block = "stone";
-    }
-    // Convert lonely blocks in ponds to water
-    let waterAdjacent = 0;
-    for (let i = 0; i < 6; i ++) {
-      if (mapping[entry.pos.shifted(i).toString()]?.block === "water") {
-        waterAdjacent ++;
-      } else if (i < 4) {
-        waterAdjacent = 0;
-        break;
-      }
-    }
-    if (waterAdjacent >= 5) entry.block = "water";
-    // Assign block to chunk array
-    const [x, y, z] = entry.pos.relative(_x, _z).toArray();
-    blocks[x][y][z] = entry.block;
-  }
-
-  // Save changes to region data
-  await world.forRegion(worldPath, async function (region, rx, rz) {
-    await world.blocksToRegion(blocks, region.bytes, rx, rz, bounds);
-  }, bounds);
-
-});
-
-// Write new region data to disk
-const regionWritePromises = [];
-for (const mcaFile in world.regionFileCache) {
-  const region = world.regionFileCache[mcaFile].bytes;
-  regionWritePromises.push(
-    Bun.write(`${worldPath}/region/${mcaFile}`, region)
-  );
-}
-await Promise.all(regionWritePromises);
-
-console.log("\nChunk generation finished");
+const { mapping } = worldGenTools;
+
+console.log(`Searching for files within "${rootPath}"...`);
+const fileList = fileTools.buildFileList(rootPath);
+console.log(`Found ${fileList.length} files.\n`);
+
+console.log(`Generating terrain...`);
+await worldGenTools.buildRegionData(fileList, parentDepth, worldPath, debug);
+console.log(`Done, ${fileList.length} files left unallocated.\n`);
 
 /**
  * Uses an implementation of 3D DDA to cast a ray that hits
@@ -561,17 +115,9 @@ function raycast (pos, fvec, range = 50) {
 
 // Returns a human-readable representation of a block-file mapping
 function formatMappingString (entry) {
-
-  // Get block position
   const positionString = entry.pos.toArray().join(" ");
-  // Build collapsed path
-  const pathParts = entry.file.path.split(path.sep);
-  const pathFile = pathParts.pop();
-  const pathStart = pathParts.slice(0, parentDepth + 1).join(path.sep);
-  const pathEllipses = pathParts.length > (parentDepth + 2) ? "/..." : "";
-
-  return `"${entry.block}" at (${positionString}): "${pathStart}${pathEllipses}/${pathFile}"`
-
+  const shortPath = entry.file.getShortPath(parentDepth);
+  return `"${entry.block}" at (${positionString}): "${shortPath}"`
 }
 
 console.log("Listening for clipboard changes...");
@@ -618,7 +164,7 @@ async function checkBlockChanges () {
     regionChecksum[`${rx},${rz}`] = region.checksum;
 
     // Iterate over all mapped chunks within this region
-    await forMappedChunks(async function (blocks, entries, _x, _z, bounds) {
+    await worldGenTools.forMappedChunks(async function (blocks, entries, _x, _z, bounds) {
 
       // "Sleep" to allow other threads to run
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -646,8 +192,7 @@ async function checkBlockChanges () {
       }
 
     }, rx, rz);
-  }, [mins, maxs]);
-
+  }, worldGenTools.terrainBounds);
 
   // Repeat this check after a delay
   setTimeout(checkBlockChanges, 200);

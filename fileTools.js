@@ -1,6 +1,29 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
+class MappedFile {
+
+  constructor (path, size, depth) {
+    this.path = path;
+    this.size = size;
+    this.depth = depth;
+  }
+
+  getShortParent (parentDepth) {
+    const pathParts = this.path.split(path.sep).slice(0, -1);
+    return pathParts.slice(0, parentDepth + 1).join(path.sep);
+  }
+
+  getShortPath (parentDepth) {
+    const pathParts = this.path.split(path.sep);
+    const pathFile = pathParts.pop();
+    const pathStart = pathParts.slice(0, parentDepth + 1).join(path.sep);
+    const pathEllipses = pathParts.length > (parentDepth + 2) ? "/..." : "";
+    return `${pathStart}${pathEllipses}${path.sep}${pathFile}`;
+  }
+
+}
+
 /**
  * Builds an array of files via depth-first search, starting with an input path.
  *
@@ -11,7 +34,7 @@ const path = require("node:path");
  * @param {array} [list=[]] - List to append to in each iteration
  * @param {number} [depth=0] - Starting depth, tracked internally
  *
- * @return {array} List of found files
+ * @return {MappedFile[]} List of found files
  */
 function buildFileList (startPath, list = [], depth = 0) {
   try {
@@ -31,11 +54,7 @@ function buildFileList (startPath, list = [], depth = 0) {
       const size = fs.statSync(itemPath).size;
       if (size === 0) continue;
 
-      list.push({
-        path: itemPath,
-        size: size,
-        depth: depth
-      });
+      list.push(new MappedFile(itemPath, size, depth));
     }
 
   } catch (error) {
@@ -44,4 +63,7 @@ function buildFileList (startPath, list = [], depth = 0) {
   return list;
 }
 
-module.exports = buildFileList;
+module.exports = {
+  MappedFile,
+  buildFileList
+};
