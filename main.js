@@ -3,6 +3,11 @@ const path = require("node:path");
 const os = require("node:os");
 const clipboard = require("clipboardy");
 
+const { promisify } = require("node:util");
+const zlib = require("node:zlib");
+const unzip = promisify(zlib.unzip);
+const deflate = promisify(zlib.deflate);
+
 const world = require("./parseWorld.js");
 const fileTools = require("./fileTools.js");
 const worldGenTools = require("./worldGenTools.js");
@@ -13,6 +18,7 @@ const worldName = process.argv[2];
 const debug = process.argv.includes("--debug");
 const rootPath = (process.argv.includes("--path") && process.argv?.[process.argv.indexOf("--path") + 1]) || "/";
 const parentDepth = (process.argv.includes("--depth") && Number(process.argv?.[process.argv.indexOf("--depth") + 1])) || 3;
+
 // Validate parameters
 if (!worldName || !rootPath || !parentDepth) {
   console.error(`
@@ -34,13 +40,61 @@ if (fs.existsSync(worldName) && fs.lstatSync(worldName).isDirectory()) {
 
 const { mapping } = worldGenTools;
 
-console.log(`Searching for files within "${rootPath}"...`);
-const fileList = fileTools.buildFileList(rootPath);
-console.log(`Found ${fileList.length} files.\n`);
+// Writes `mapping` data to disk, allowing for interrupted sessions
+async function writeMappingToDisk () {
 
-console.log(`Generating terrain...`);
-await worldGenTools.buildRegionData(fileList, parentDepth, worldPath, debug);
-console.log(`Done, ${fileList.length} files left unallocated.\n`);
+  const compactMapping = structuredClone(mapping);
+  for (const key in compactMapping) {
+    const { pos, file } = compactMapping[key];
+    compactMapping[key].pos = [pos.x, pos.y, pos.z];
+    compactMapping[key].file = [file.path, file.size, file.depth];
+  }
+
+  const json = JSON.stringify(compactMapping);
+  const compressed = await deflate(json);
+  await Bun.write(mappingJSONPath, compressed);
+
+}
+
+const mappingJSONPath = `${__dirname}/mapping/${worldName}.json.zlib`;
+if (fs.existsSync(mappingJSONPath)) {
+
+  console.log("Restoring block-file mapping from file...");
+  const compressed = await Bun.file(mappingJSONPath).bytes();
+  const json = JSON.parse(await unzip(compressed));
+
+  const [mins, maxs] = worldGenTools.terrainBounds;
+
+  for (const key in json) {
+    const pos = new Vector(...json[key].pos);
+    mapping[key] = {
+      block: json[key].block,
+      file: new fileTools.MappedFile(...json[key].file),
+      pos
+    };
+    if (pos.x < mins.x) mins.x = pos.x;
+    else if (pos.x > maxs.x) maxs.x = pos.x;
+    if (pos.y < mins.y) mins.y = pos.y;
+    else if (pos.y > maxs.y) maxs.y = pos.y;
+    if (pos.z < mins.z) mins.z = pos.z;
+    else if (pos.z > maxs.z) maxs.z = pos.z;
+  }
+
+  console.log(`Done, loaded ${Object.keys(mapping).length} blocks.`);
+
+} else {
+
+  console.log(`Searching for files within "${rootPath}"...`);
+  const fileList = fileTools.buildFileList(rootPath);
+  console.log(`Found ${fileList.length} files.\n`);
+
+  console.log(`Generating terrain...`);
+  await worldGenTools.buildRegionData(fileList, parentDepth, worldPath, debug);
+  console.log(`Done, ${fileList.length} files left unallocated.\n`);
+
+  await writeMappingToDisk();
+
+}
 
 /**
  * Uses an implementation of 3D DDA to cast a ray that hits
@@ -198,3 +252,6 @@ async function checkBlockChanges () {
   setTimeout(checkBlockChanges, 200);
 }
 checkBlockChanges();
+
+// Save block-file mapping every few minutes
+setInterval(writeMappingToDisk, 1000 * 60 * 5);

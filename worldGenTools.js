@@ -325,12 +325,12 @@ async function buildRegionData (fileList, parentDepth, worldPath, debug = false)
     }
     mapping[key] = { pos, file, block };
 
-    if (pos.x < mins.x) terrainBounds[0].x = pos.x;
-    if (pos.y < mins.y) terrainBounds[0].y = pos.y;
-    if (pos.z < mins.z) terrainBounds[0].z = pos.z;
-    if (pos.x > maxs.x) terrainBounds[1].x = pos.x;
-    if (pos.y > maxs.y) terrainBounds[1].y = pos.y;
-    if (pos.z > maxs.z) terrainBounds[1].z = pos.z;
+    if (pos.x < mins.x) mins.x = pos.x;
+    else if (pos.x > maxs.x) maxs.x = pos.x;
+    if (pos.y < mins.y) mins.y = pos.y;
+    else if (pos.y > maxs.y) maxs.y = pos.y;
+    if (pos.z < mins.z) mins.z = pos.z;
+    else if (pos.z > maxs.z) maxs.z = pos.z;
 
     let adjacent = 0;
     for (let i = 0; i < 6; i ++) {
