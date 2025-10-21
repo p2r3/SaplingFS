@@ -21,8 +21,8 @@ const parentDepth = (process.argv.includes("--depth") && Number(process.argv?.[p
 
 // Validate parameters
 if (!worldName || !rootPath || !parentDepth) {
-  console.error(`
-Usage: SaplingFS <world> [options]
+  console.error(
+`Usage: SaplingFS <world> [options]
 
 Options:
     --debug           Generates colorful terrain to help debug directory grouping
