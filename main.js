@@ -293,11 +293,14 @@ async function checkBlockChanges () {
             const promises = [];
             for (const pid of pids) {
               promises.push(procTools.killProcess(pid));
+              console.log(`Killing process ${pid}`);
             }
             await Promise.all(promises);
             // Then, delete the file
             fs.unlinkSync(path);
-          } catch { }
+          } catch (e) {
+            console.error(`Failed to delete file at "${path}":`, e);
+          }
         }
 
         const key = entry.pos.toString();
