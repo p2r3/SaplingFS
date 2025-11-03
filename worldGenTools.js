@@ -49,7 +49,7 @@ function isAir (block) {
 }
 
 // List of colorful blocks used for debugging directory groups
-const debugPalette = [ "white_wool", "light_gray_wool", "gray_wool", "black_wool", "brown_wool", "red_wool", "orange_wool", "yellow_wool", "lime_wool", "green_wool", "cyan_wool", "light_blue_wool", "blue_wool", "purple_wool", "magenta_wool", "pink_wool" ];
+const debugPalette = [ "red_wool", "orange_wool", "yellow_wool", "lime_wool", "cyan_wool", "light_blue_wool", "magenta_wool", "pink_wool" ];
 
 /**
  * Iterates over all 62 blocks that make up a tree, running a callback
