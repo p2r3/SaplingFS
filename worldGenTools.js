@@ -3,6 +3,10 @@ const path = require("node:path");
 const Vector = require("./Vector.js");
 const world = require("./parseWorld.js");
 
+const { promisify } = require("node:util");
+const zlib = require("node:zlib");
+const deflate = promisify(zlib.deflate);
+
 /**
  * List of blocks mapped to files in the following format:
  * mapping[`${x},${y},${z}`] = {
@@ -24,6 +28,22 @@ let terrainBounds = [
   new Vector(0, 0, 0),
   new Vector(0, 0, 0)
 ];
+
+// Writes `mapping` data to disk, allowing for interrupted sessions
+async function writeMappingToDisk(mappingJSONPath) {
+
+  const compactMapping = structuredClone(mapping);
+  for (const key in compactMapping) {
+    const { pos, file } = compactMapping[key];
+    compactMapping[key].pos = [pos.x, pos.y, pos.z];
+    compactMapping[key].file = [file.path, file.size, file.depth];
+  }
+
+  const json = JSON.stringify(compactMapping);
+  const compressed = await deflate(json);
+  await Bun.write(mappingJSONPath, compressed);
+
+}
 
 // Whether the block is part of natural ground terrain
 function isGroundBlock (block) {
@@ -182,7 +202,7 @@ function countAdjacent (pos) {
  * @param {string} worldPath - Path to world data directory
  * @param {boolean} [debug=false] - Whether to use the debug palette
  */
-async function buildRegionData (fileList, parentDepth, worldPath, debug = false) {
+async function buildRegionData(fileList, parentDepth, worldPath, mappingJSONPath, debug = false, noProgress = false) {
 
   // Open node list - `mapping` functions as the closed node list
   let nodes = [new Vector(0, 32, 0)];
@@ -365,8 +385,8 @@ async function buildRegionData (fileList, parentDepth, worldPath, debug = false)
 
   }
 
-  // Second pass - make it look "Minecraft-ier" and generate region data
-  await forMappedChunks(async function (blocks, entries, _x, _z, bounds) {
+  // Second pass - make it look "Minecraft-ier"
+  await forMappedChunks(async function (blocks, entries, _x, _z, _) {
 
     console.log(`  Building data for chunk (${_x} ${_z})`);
 
@@ -465,6 +485,7 @@ async function buildRegionData (fileList, parentDepth, worldPath, debug = false)
       // Assign block to chunk array
       const [x, y, z] = entry.pos.relative(_x, _z).toArray();
       blocks[x][y][z] = entry.block;
+      mapping[entry.pos.toString()].block = entry.block;
     }
 
     // Insert ore veins
@@ -488,6 +509,7 @@ async function buildRegionData (fileList, parentDepth, worldPath, debug = false)
           curr.block = ore.name;
           const [x, y, z] = curr.pos.relative(_x, _z).toArray();
           blocks[x][y][z] = curr.block;
+          mapping[curr.pos.toString()].block = curr.block;
         }
 
         const nextPos = curr.pos.shifted(Math.floor(Math.random() * 6));
@@ -504,7 +526,15 @@ async function buildRegionData (fileList, parentDepth, worldPath, debug = false)
       } while (Math.random() < ore.size);
 
     }
+  });
 
+  // Backup mapping in case generating region data fails
+  if (!noProgress) {
+    await writeMappingToDisk(mappingJSONPath);
+  }
+
+  // Generate region data
+  await forMappedChunks(async function (blocks, _, _x, _z, bounds) {
     // Use backup path to load initial region data, effectively starting fresh
     const backupWorldPath = path.resolve(worldPath) + "_SaplingFS_backup";
     await world.forRegion(backupWorldPath, async function (region, rx, rz) {

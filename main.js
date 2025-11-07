@@ -7,7 +7,6 @@ const { $ } = require("bun");
 const { promisify } = require("node:util");
 const zlib = require("node:zlib");
 const unzip = promisify(zlib.unzip);
-const deflate = promisify(zlib.deflate);
 
 const world = require("./parseWorld.js");
 const fileTools = require("./fileTools.js");
@@ -109,22 +108,6 @@ const cwd = process.cwd();
 try { fs.mkdirSync(`${cwd}/mapping`) } catch { }
 const mappingJSONPath = `${cwd}/mapping/${worldName}.json.zlib`;
 
-// Writes `mapping` data to disk, allowing for interrupted sessions
-async function writeMappingToDisk () {
-
-  const compactMapping = structuredClone(mapping);
-  for (const key in compactMapping) {
-    const { pos, file } = compactMapping[key];
-    compactMapping[key].pos = [pos.x, pos.y, pos.z];
-    compactMapping[key].file = [file.path, file.size, file.depth];
-  }
-
-  const json = JSON.stringify(compactMapping);
-  const compressed = await deflate(json);
-  await Bun.write(mappingJSONPath, compressed);
-
-}
-
 if (!noProgress && fs.existsSync(mappingJSONPath)) {
 
   console.log("Restoring block-file mapping from file...");
@@ -157,11 +140,11 @@ if (!noProgress && fs.existsSync(mappingJSONPath)) {
   console.log(`Found ${fileList.length} files.\n`);
 
   console.log(`Generating terrain...`);
-  await worldGenTools.buildRegionData(fileList, parentDepth, worldPath, debug);
+  await worldGenTools.buildRegionData(fileList, parentDepth, worldPath, mappingJSONPath, debug, noProgress);
   console.log(`Done, ${fileList.length} files left unallocated.\n`);
 
   if (!noProgress) {
-    await writeMappingToDisk();
+    await writeMappingToDisk(mappingJSONPath);
   }
 
 }
@@ -361,5 +344,5 @@ checkBlockChanges();
 
 if (!noProgress) {
   // Save block-file mapping every few minutes
-  setInterval(writeMappingToDisk, 1000 * 60 * 5);
+  setInterval(function () { writeMappingToDisk(mappingJSONPath) }, 1000 * 60 * 5);
 }
