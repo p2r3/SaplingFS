@@ -22,8 +22,8 @@ In other words: every block in-game is mapped to a file on your computer. Breaki
      - If you want mobs to spawn, you'll have to change the last part of the preset text from `minecraft:the_void` to `minecraft:plains` (or similar).
    - Make sure the game mode is "Creative", or at least ensure that you'll be able to run commands.
    - Give the world a unique (and ideally simple) name. The rest of this guide will use "`saplingfs_world`", so either use the same name or remember to replace it in the commands that follow.
-4. Disable random ticks (optional but recommended).
-   - Once in-game, use the command `/gamerule randomTickSpeed 0` to disable random block ticks. For an unknown reason, leaves placed by this program decay despite being connected to a log. (Contributions welcome.)
+4. (Optional) Disable random ticks if you prefer the terrain to stay perfectly static.
+   - Once in-game, you can use `/gamerule randomTickSpeed 0` to disable random block ticks. SaplingFS now tags generated leaves with the same distance metadata the game uses, so they behave like natural foliage—staying put while logs remain and decaying after the wood is removed.
 5. Save the world and quit to the title screen.
 6. In the terminal window you opened earlier:
    - **On Windows**: type `.\SaplingFS-windows.exe "saplingfs_world"`

@@ -60,6 +60,17 @@ const debugPalette = [ "red_wool", "orange_wool", "yellow_wool", "lime_wool", "c
  * @param {function} callback - Function to call for each block
  */
 function forTreeBlocks (pos, callback) {
+  // Helper: derive leaf block state with correct distance metadata
+  function getLeafBlock (dx, dy, dz) {
+    const logHeights = [0, 1, 2, 3, 4];
+    let minDistance = Infinity;
+    for (const logY of logHeights) {
+      const distance = Math.abs(dx) + Math.abs(dy - logY) + Math.abs(dz);
+      if (distance < minDistance) minDistance = distance;
+    }
+    const clamped = Math.max(1, Math.min(6, minDistance));
+    return `oak_leaves[distance=${clamped},persistent=false]`;
+  }
   // Tree stump
   for (let i = 0; i < 5; i ++) {
     callback(pos.add(0, i, 0), "oak_log");
@@ -70,7 +81,8 @@ function forTreeBlocks (pos, callback) {
       for (let k = -2; k <= 2; k ++) {
         if (j === 0 && k === 0) continue;
         if (i === 1 && Math.abs(j) === 2 && Math.abs(k) === 2) continue;
-        callback(pos.add(j, i + 2, k), "oak_leaves");
+        // Encode distance from the trunk so leaves decay naturally when logs disappear
+        callback(pos.add(j, i + 2, k), getLeafBlock(j, i + 2, k));
       }
     }
   }
@@ -80,7 +92,8 @@ function forTreeBlocks (pos, callback) {
       for (let k = -1; k <= 1; k ++) {
         if (i === 0 && j === 0 && k === 0) continue;
         if (i === 1 && j !== 0 && k !== 0) continue;
-        callback(pos.add(j, i + 4, k), "oak_leaves");
+        // Encode distance from the trunk so leaves decay naturally when logs disappear
+        callback(pos.add(j, i + 4, k), getLeafBlock(j, i + 4, k));
       }
     }
   }
