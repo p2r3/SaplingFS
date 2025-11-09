@@ -9,6 +9,45 @@ const deflate = promisify(zlib.deflate);
 
 const Vector = require("./Vector.js");
 
+// Helpers for normalizing block identifiers with optional state properties
+function normalizeBlockName (name) {
+  if (!name) return "";
+  const parts = name.split(":");
+  return parts.length > 1 ? parts[parts.length - 1] : parts[0];
+}
+
+function parseBlockString (block) {
+  let name = block || "air";
+  const properties = {};
+
+  const bracketIndex = name.indexOf("[");
+  if (bracketIndex !== -1 && name.endsWith("]")) {
+    const propsPart = name.slice(bracketIndex + 1, -1);
+    name = name.slice(0, bracketIndex);
+    if (propsPart.length > 0) {
+      for (const pair of propsPart.split(",")) {
+        const [key, value] = pair.split("=");
+        if (!key) continue;
+        properties[key.trim()] = (value ?? "").trim();
+      }
+    }
+  }
+
+  name = normalizeBlockName(name.trim());
+
+  return { name, properties };
+}
+
+function stringifyBlock (name, properties = {}) {
+  const normalized = normalizeBlockName(name);
+  const entries = Object.entries(properties);
+  if (entries.length === 0) return normalized;
+
+  entries.sort((a, b) => a[0].localeCompare(b[0]));
+  const props = entries.map(([key, value]) => `${key}=${value}`).join(",");
+  return `${normalized}[${props}]`;
+}
+
 /**
  * Extracts block arrays from a region (.mca) file.
  *
@@ -68,8 +107,18 @@ async function regionToBlocks (r, blocks, rx, rz, bounds, expectHash = null) {
     for (const section of json.value.sections.value.value) {
       if (!("block_states" in section)) continue;
 
-      const _y = section["Y"].value;
-      const palette = section.block_states.value.palette.value.value.map(c => c["Name"].value.split("minecraft:")[1]);
+  const _y = section["Y"].value;
+  // Preserve block state properties when reading palette entries
+  const palette = section.block_states.value.palette.value.value.map(function (entry) {
+        const props = {};
+        if ("Properties" in entry) {
+          const values = entry.Properties.value;
+          for (const key in values) {
+            props[key] = values[key].value;
+          }
+        }
+        return stringifyBlock(entry["Name"].value, props);
+      });
 
       // If no block data is present, infer from palette
       if (!("data" in section.block_states.value)) {
@@ -195,10 +244,13 @@ async function blocksToRegion (blocks, r, rx, rz, bounds) {
               block = blocks[x - X_MIN][y - Y_MIN][z - Z_MIN];
             }
 
-            if (!palette.includes(block)) {
-              palette.push(block);
+            const parsed = parseBlockString(block);
+            const normalizedBlock = stringifyBlock(parsed.name, parsed.properties);
+
+            if (!palette.includes(normalizedBlock)) {
+              palette.push(normalizedBlock);
             }
-            ids.push(palette.indexOf(block));
+            ids.push(palette.indexOf(normalizedBlock));
 
           }
         }
@@ -219,12 +271,31 @@ async function blocksToRegion (blocks, r, rx, rz, bounds) {
             type: "list",
             value: {
               type: "compound",
-              value: palette.map(name => ({
-                Name: {
-                  type: "string",
-                  value: "minecraft:" + name
+              // Preserve block state properties when rebuilding the palette
+              value: palette.map(blockSpec => {
+                const { name, properties } = parseBlockString(blockSpec);
+                const paletteEntry = {
+                  Name: {
+                    type: "string",
+                    value: "minecraft:" + name
+                  }
+                };
+                const propEntries = Object.entries(properties);
+                if (propEntries.length > 0) {
+                  const propValue = {};
+                  for (const [key, value] of propEntries) {
+                    propValue[key] = {
+                      type: "string",
+                      value
+                    };
+                  }
+                  paletteEntry.Properties = {
+                    type: "compound",
+                    value: propValue
+                  };
                 }
-              }))
+                return paletteEntry;
+              })
             }
           },
         }
